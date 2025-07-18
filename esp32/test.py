@@ -2,6 +2,7 @@ import json
 import time
 import threading
 import random
+from datetime import datetime
 import paho.mqtt.client as mqtt
 
 class MQTTConnection:
@@ -33,6 +34,7 @@ class MQTTConnection:
         self.client.on_publish = self.on_publish
         
         self.is_connected = False
+        self.start_time = time.time()  # Track when the device started
         
     def on_connect(self, client, userdata, flags, reason_code, properties=None):
         """Callback when client connects to broker (VERSION2 compatible)"""
@@ -165,22 +167,81 @@ class MQTTConnection:
         self.publish_message("status/device", status)
     
     def send_sensor_data(self):
-        """Simulate sending sensor data"""
-        # Simulate temperature sensor
-        temp_data = {
-            "temperature": round(random.uniform(20.0, 30.0), 2),
-            "humidity": round(random.uniform(40.0, 80.0), 2),
-            "timestamp": time.time(),
-            "device_id": self.client_id
+        """Simulate sending comprehensive pond sensor data"""
+        # Get current time in ISO format
+        current_time = datetime.utcnow().isoformat() + 'Z'
+        
+        # Extract pond_id from client_id (e.g., "pond_001_sensor" -> "pond_001")
+        pond_id = self.client_id.replace("_sensor", "").replace("device_", "pond_")
+        
+        # Generate realistic pond water quality data
+        pond_data = {
+            "pond_id": pond_id,
+            "device_id": self.client_id,
+            "timestamp": current_time,
+            "location": {
+                "latitude": round(random.uniform(34.0, 35.0), 6),  # Example coordinates
+                "longitude": round(random.uniform(-118.5, -117.5), 6)
+            },
+            # Water quality parameters with realistic ranges
+            "temperature": round(random.uniform(18.0, 28.0), 2),  # °C - typical fish pond range
+            "ph": round(random.uniform(6.5, 8.5), 2),  # pH - optimal fish range
+            "dissolved_oxygen": round(random.uniform(5.0, 12.0), 2),  # mg/L - critical for fish
+            "turbidity": round(random.uniform(0.5, 25.0), 2),  # NTU - water clarity
+            "ammonia": round(random.uniform(0.0, 0.5), 3),  # mg/L - toxic to fish
+            "nitrite": round(random.uniform(0.0, 0.3), 3),  # mg/L - toxic intermediate
+            "nitrate": round(random.uniform(0.0, 40.0), 2),  # mg/L - end product
+            "salinity": round(random.uniform(0.0, 5.0), 2),  # ppt - for brackish ponds
+            "water_level": round(random.uniform(0.8, 2.5), 2),  # meters - pond depth
+            
+            # Additional environmental data
+            "ambient_temperature": round(random.uniform(15.0, 35.0), 2),  # °C
+            "humidity": round(random.uniform(40.0, 85.0), 2),  # %
+            "light_intensity": round(random.uniform(0, 100000), 0),  # lux
+            
+            # System status
+            "battery_level": round(random.uniform(20.0, 100.0), 1),  # %
+            "signal_strength": round(random.uniform(-90, -30), 0),  # dBm
+            "sensor_status": "operational",
+            "calibration_date": "2025-01-15T08:00:00Z",
+            
+            # Data quality indicators
+            "data_quality": "good",  # good, fair, poor
+            "sensor_drift": round(random.uniform(0.0, 5.0), 2),  # %
+            "measurement_count": random.randint(1, 10)  # number of readings averaged
         }
         
-        self.publish_message("sensors/temperature", temp_data)
+        # Add some realistic variations based on time of day
+        hour = datetime.utcnow().hour
+        if 6 <= hour <= 18:  # Daytime
+            pond_data["dissolved_oxygen"] += random.uniform(0.5, 1.5)  # Higher O2 during day
+            pond_data["temperature"] += random.uniform(1.0, 3.0)  # Warmer during day
+        else:  # Nighttime
+            pond_data["dissolved_oxygen"] -= random.uniform(0.2, 0.8)  # Lower O2 at night
+            pond_data["temperature"] -= random.uniform(0.5, 2.0)  # Cooler at night
         
-        # Send heartbeat
+        # Ensure values stay within realistic bounds
+        pond_data["dissolved_oxygen"] = max(0.0, min(15.0, pond_data["dissolved_oxygen"]))
+        pond_data["temperature"] = max(0.0, min(40.0, pond_data["temperature"]))
+        
+        # Send to the topic that matches your backend expectations
+        topic = f"farm1/{pond_id}/data"  # Legacy format your backend expects
+        self.publish_message(topic, pond_data)
+        
+        # Also send to new sensor topic format
+        self.publish_message("sensors/water_quality", pond_data)
+        
+        # Send heartbeat with more details
         heartbeat = {
             "device_id": self.client_id,
-            "timestamp": time.time(),
-            "status": "alive"
+            "pond_id": pond_id,
+            "timestamp": current_time,
+            "status": "alive",
+            "uptime": round(time.time() - self.start_time, 2),  # seconds since start
+            "memory_usage": round(random.uniform(30.0, 80.0), 1),  # %
+            "cpu_usage": round(random.uniform(5.0, 40.0), 1),  # %
+            "network_quality": random.choice(["excellent", "good", "fair", "poor"]),
+            "last_maintenance": "2025-01-10T14:30:00Z"
         }
         self.publish_message("status/heartbeat", heartbeat)
 
@@ -189,7 +250,7 @@ def main():
     BROKER_HOST = "broker.hivemq.com"  # Public broker for testing
     # Alternative: "test.mosquitto.org" or your local IP if broker is running
     BROKER_PORT = 1883
-    CLIENT_ID = "ocea_device_1"
+    CLIENT_ID = "pond_001_sensor"  # More realistic pond sensor ID
     
     print("🔧 MQTT Configuration:")
     print(f"   Broker: {BROKER_HOST}:{BROKER_PORT}")

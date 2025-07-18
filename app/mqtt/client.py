@@ -37,6 +37,7 @@ class MQTTHandler:
             # Subscribe to multiple topic patterns
             topics = [
                 ("sensors/+", 0),
+                ("sensors/water_quality", 0),
                 ("status/+", 0),
                 ("commands/+", 0),
                 (settings.mqtt_topic_pattern, 0)  # Legacy pond data format
@@ -76,6 +77,12 @@ class MQTTHandler:
                     asyncio.ensure_future(self.process_temperature_data(payload))
                 else:
                     loop.run_until_complete(self.process_temperature_data(payload))
+            elif msg.topic.startswith("sensors/water_quality"):
+                # Handle comprehensive water quality data
+                if loop.is_running():
+                    asyncio.ensure_future(self.process_water_quality_data(payload))
+                else:
+                    loop.run_until_complete(self.process_water_quality_data(payload))
             elif msg.topic.startswith("status/heartbeat"):
                 # Handle heartbeat messages
                 if loop.is_running():
@@ -121,6 +128,20 @@ class MQTTHandler:
         except Exception as e:
             logger.error(f"Error processing temperature data: {e}")
 
+    async def process_water_quality_data(self, data: Dict[str, Any]):
+        """Process comprehensive water quality data"""
+        try:
+            pond_id = data.get('pond_id', 'unknown')
+            device_id = data.get('device_id', 'unknown')
+            
+            logger.info(f"💧 Water quality data from {device_id} for pond {pond_id}")
+            
+            # Process this as regular sensor data
+            await self.process_sensor_data(pond_id, data)
+            
+        except Exception as e:
+            logger.error(f"Error processing water quality data: {e}")
+
     async def process_heartbeat_data(self, data: Dict[str, Any]):
         """Process heartbeat data from devices"""
         try:
@@ -148,42 +169,199 @@ class MQTTHandler:
             logger.error(f"Error processing device status: {e}")
 
     async def process_sensor_data(self, pond_id: str, data: Dict[str, Any]):
-        """Process incoming sensor data"""
+        """Process incoming sensor data with comprehensive validation and storage"""
         try:
-            # Extract timestamp from data or use current time
+            logger.info(f"📊 Processing sensor data for pond {pond_id}: {data}")
+            
+            # Extract and validate timestamp
             timestamp_str = data.get('timestamp')
             if timestamp_str:
                 try:
-                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                except ValueError:
+                    # Handle both ISO format and Unix timestamp
+                    if isinstance(timestamp_str, str):
+                        timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    else:
+                        timestamp = datetime.fromtimestamp(timestamp_str)
+                except (ValueError, TypeError):
                     timestamp = datetime.utcnow()
+                    logger.warning(f"Invalid timestamp format for pond {pond_id}, using current time")
             else:
                 timestamp = datetime.utcnow()
+
+            # Validate required sensor data
+            sensor_values = {
+                'temperature': data.get('temperature'),
+                'ph': data.get('ph'),
+                'dissolved_oxygen': data.get('dissolved_oxygen'),
+                'turbidity': data.get('turbidity'),
+                'ammonia': data.get('ammonia'),
+                'nitrite': data.get('nitrite'),
+                'nitrate': data.get('nitrate'),
+                'salinity': data.get('salinity'),
+                'water_level': data.get('water_level')
+            }
+            
+            # Log data quality
+            data_quality = data.get('data_quality', 'unknown')
+            sensor_drift = data.get('sensor_drift', 0)
+            battery_level = data.get('battery_level', 100)
+            
+            logger.info(f"🌊 Pond {pond_id} - Quality: {data_quality}, Battery: {battery_level}%, Drift: {sensor_drift}%")
+            
+            # Validate critical parameters
+            validation_errors = []
+            if sensor_values['temperature'] is not None:
+                if sensor_values['temperature'] < -10 or sensor_values['temperature'] > 50:
+                    validation_errors.append(f"Temperature out of range: {sensor_values['temperature']}°C")
+            
+            if sensor_values['ph'] is not None:
+                if sensor_values['ph'] < 0 or sensor_values['ph'] > 14:
+                    validation_errors.append(f"pH out of range: {sensor_values['ph']}")
+            
+            if sensor_values['dissolved_oxygen'] is not None:
+                if sensor_values['dissolved_oxygen'] < 0 or sensor_values['dissolved_oxygen'] > 20:
+                    validation_errors.append(f"Dissolved oxygen out of range: {sensor_values['dissolved_oxygen']} mg/L")
+            
+            # Log validation errors but still process data
+            if validation_errors:
+                logger.warning(f"Validation errors for pond {pond_id}: {validation_errors}")
 
             # Create sensor reading
             reading_data = SensorReadingCreate(
                 pond_id=pond_id,
                 timestamp=timestamp,
-                temperature=data.get('temperature'),
-                ph=data.get('ph'),
-                dissolved_oxygen=data.get('dissolved_oxygen'),
-                turbidity=data.get('turbidity'),
-                ammonia=data.get('ammonia'),
-                nitrite=data.get('nitrite'),
-                nitrate=data.get('nitrate'),
-                salinity=data.get('salinity'),
-                water_level=data.get('water_level')
+                temperature=sensor_values['temperature'],
+                ph=sensor_values['ph'],
+                dissolved_oxygen=sensor_values['dissolved_oxygen'],
+                turbidity=sensor_values['turbidity'],
+                ammonia=sensor_values['ammonia'],
+                nitrite=sensor_values['nitrite'],
+                nitrate=sensor_values['nitrate'],
+                salinity=sensor_values['salinity'],
+                water_level=sensor_values['water_level']
             )
 
             # Store the reading
             reading = await self.sensor_service.create_reading(reading_data)
-            logger.info(f"Stored sensor reading for pond {pond_id}")
+            logger.info(f"✅ Stored sensor reading for pond {pond_id} at {timestamp}")
 
             # Perform anomaly detection
             await self.perform_anomaly_detection(reading)
+            
+            # Store device metadata if available
+            await self.store_device_metadata(pond_id, data)
+            
+            # Check for critical alerts
+            await self.check_critical_conditions(pond_id, sensor_values, data)
 
         except Exception as e:
-            logger.error(f"Error processing sensor data: {e}")
+            logger.error(f"❌ Error processing sensor data for pond {pond_id}: {e}")
+            
+    async def store_device_metadata(self, pond_id: str, data: Dict[str, Any]):
+        """Store additional device metadata"""
+        try:
+            device_info = {
+                'device_id': data.get('device_id'),
+                'battery_level': data.get('battery_level'),
+                'signal_strength': data.get('signal_strength'),
+                'sensor_status': data.get('sensor_status'),
+                'calibration_date': data.get('calibration_date'),
+                'data_quality': data.get('data_quality'),
+                'sensor_drift': data.get('sensor_drift'),
+                'location': data.get('location'),
+                'last_seen': datetime.utcnow()
+            }
+            
+            # Here you could store this in a separate device_status collection
+            # For now, we'll just log it
+            logger.info(f"📱 Device info for pond {pond_id}: {device_info}")
+            
+        except Exception as e:
+            logger.error(f"Error storing device metadata: {e}")
+    
+    async def check_critical_conditions(self, pond_id: str, sensor_values: Dict[str, Any], data: Dict[str, Any]):
+        """Check for critical conditions that need immediate attention"""
+        try:
+            critical_alerts = []
+            
+            # Critical dissolved oxygen levels
+            if sensor_values.get('dissolved_oxygen') is not None:
+                do_level = sensor_values['dissolved_oxygen']
+                if do_level < 3.0:  # Critical for fish survival
+                    critical_alerts.append({
+                        'type': 'critical_oxygen',
+                        'message': f'Dangerously low dissolved oxygen: {do_level} mg/L',
+                        'severity': 'critical'
+                    })
+                elif do_level < 5.0:  # Warning level
+                    critical_alerts.append({
+                        'type': 'low_oxygen',
+                        'message': f'Low dissolved oxygen: {do_level} mg/L',
+                        'severity': 'high'
+                    })
+            
+            # Critical temperature
+            if sensor_values.get('temperature') is not None:
+                temp = sensor_values['temperature']
+                if temp < 10.0 or temp > 35.0:
+                    critical_alerts.append({
+                        'type': 'temperature_extreme',
+                        'message': f'Extreme temperature: {temp}°C',
+                        'severity': 'critical'
+                    })
+            
+            # Critical pH levels
+            if sensor_values.get('ph') is not None:
+                ph = sensor_values['ph']
+                if ph < 6.0 or ph > 9.0:
+                    critical_alerts.append({
+                        'type': 'ph_extreme',
+                        'message': f'Extreme pH level: {ph}',
+                        'severity': 'critical'
+                    })
+            
+            # High ammonia levels
+            if sensor_values.get('ammonia') is not None:
+                ammonia = sensor_values['ammonia']
+                if ammonia > 0.25:  # Toxic level
+                    critical_alerts.append({
+                        'type': 'high_ammonia',
+                        'message': f'High ammonia level: {ammonia} mg/L',
+                        'severity': 'critical'
+                    })
+            
+            # Low battery warning
+            battery_level = data.get('battery_level')
+            if battery_level is not None and battery_level < 20:
+                critical_alerts.append({
+                    'type': 'low_battery',
+                    'message': f'Low device battery: {battery_level}%',
+                    'severity': 'medium'
+                })
+            
+            # Create alerts for critical conditions
+            for alert_info in critical_alerts:
+                await self.create_immediate_alert(pond_id, alert_info)
+                
+        except Exception as e:
+            logger.error(f"Error checking critical conditions: {e}")
+    
+    async def create_immediate_alert(self, pond_id: str, alert_info: Dict[str, Any]):
+        """Create immediate alert for critical conditions"""
+        try:
+            alert_data = AlertCreate(
+                pond_id=pond_id,
+                alert_type=alert_info['type'],
+                severity=alert_info['severity'],
+                title=f"Critical Alert - Pond {pond_id}",
+                message=alert_info['message']
+            )
+            
+            alert = await self.alert_service.create_alert(alert_data)
+            logger.error(f"🚨 CRITICAL ALERT created for pond {pond_id}: {alert_info['message']}")
+            
+        except Exception as e:
+            logger.error(f"Error creating immediate alert: {e}")
 
     async def perform_anomaly_detection(self, reading):
         """Perform anomaly detection on the sensor reading"""

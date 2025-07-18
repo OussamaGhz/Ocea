@@ -83,11 +83,21 @@ class SensorReading(BaseModel):
     
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     pond_id: PyObjectId
-    sensor_type: str  # e.g., "temperature", "ph", "dissolved_oxygen"
-    value: float
-    unit: str  # e.g., "celsius", "pH", "mg/L"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    temperature: Optional[float] = None
+    ph: Optional[float] = None
+    dissolved_oxygen: Optional[float] = None
+    turbidity: Optional[float] = None
+    ammonia: Optional[float] = None
+    nitrite: Optional[float] = None
+    nitrate: Optional[float] = None
+    salinity: Optional[float] = None
+    water_level: Optional[float] = None
     device_id: Optional[str] = None
+    is_anomaly: bool = False
+    anomaly_score: Optional[float] = None
+    anomaly_reasons: Optional[List[str]] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class AlertSeverity(str, Enum):

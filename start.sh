@@ -31,14 +31,15 @@ mkdir -p models
 
 # Function to start services
 start_api() {
-    echo "🚀 Starting API server..."
+    echo "🚀 Starting API server with integrated MQTT subscriber..."
     uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload &
     API_PID=$!
     echo "API server started with PID: $API_PID"
+    echo "📡 MQTT subscriber will start automatically as a background service"
 }
 
-start_mqtt() {
-    echo "📡 Starting MQTT subscriber..."
+start_mqtt_only() {
+    echo "📡 Starting MQTT subscriber only..."
     python -m app.mqtt.subscriber &
     MQTT_PID=$!
     echo "MQTT subscriber started with PID: $MQTT_PID"
@@ -66,7 +67,7 @@ case "$1" in
         wait $API_PID
         ;;
     "mqtt")
-        start_mqtt
+        start_mqtt_only
         wait $MQTT_PID
         ;;
     "setup")
@@ -78,14 +79,13 @@ case "$1" in
         python scripts/mqtt_test_publisher.py
         ;;
     *)
-        echo "Starting all services..."
+        echo "Starting all services (API with integrated MQTT subscriber)..."
         start_api
-        sleep 2  # Give API time to start
-        start_mqtt
         
         echo "✅ All services started!"
         echo "📊 API Documentation: http://localhost:8000/docs"
         echo "❤️  Health Check: http://localhost:8000/health"
+        echo "🔧 Services Status: http://localhost:8000/services/status"
         echo ""
         echo "Press Ctrl+C to stop all services"
         

@@ -59,7 +59,9 @@ class MQTTHandler:
         try:
             # Parse the JSON payload
             payload_str = msg.payload.decode('utf-8')
+            logger.info(f"Raw payload from {msg.topic}: '{payload_str}'")
             payload = json.loads(payload_str)
+
             
             logger.info(f"Received message from {msg.topic}: {payload}")
             
@@ -243,7 +245,8 @@ class MQTTHandler:
                 nitrite=sensor_values['nitrite'],
                 nitrate=sensor_values['nitrate'],
                 salinity=sensor_values['salinity'],
-                water_level=sensor_values['water_level']
+                water_level=sensor_values['water_level'],
+                device_id=data.get('device_id')
             )
 
             # Store the reading
@@ -406,7 +409,7 @@ class MQTTHandler:
 
             # Create alert
             alert_data = AlertCreate(
-                pond_id=reading.pond_id,
+                pond_id=str(reading.pond_id),  # Convert ObjectId to string
                 alert_type="anomaly",
                 severity=severity,
                 title=f"Water Quality Anomaly Detected - Pond {reading.pond_id}",

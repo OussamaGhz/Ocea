@@ -301,7 +301,7 @@ class PondSensorSimulator:
                     self.client.publish("status/heartbeat", json.dumps(heartbeat))
                 
                 print(f"⏱️ Waiting 30 seconds before next cycle...")
-                time.sleep(30)  # Wait 30 seconds between cycles
+                time.sleep(1)  # Wait 30 seconds between cycles
                 
         except KeyboardInterrupt:
             print("\n🛑 Simulation stopped by user")

@@ -100,6 +100,7 @@ class SensorReadingCreate(BaseModel):
     nitrate: Optional[float] = None
     salinity: Optional[float] = None
     water_level: Optional[float] = None
+    device_id: Optional[str] = None
 
 
 class SensorReadingResponse(BaseModel):
@@ -115,6 +116,7 @@ class SensorReadingResponse(BaseModel):
     nitrate: Optional[float]
     salinity: Optional[float]
     water_level: Optional[float]
+    device_id: Optional[str]
     is_anomaly: bool
     anomaly_score: Optional[float]
     anomaly_reasons: Optional[List[str]]

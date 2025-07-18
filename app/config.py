@@ -17,11 +17,11 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     
     # MQTT
-    mqtt_broker_host: str = "localhost"
+    mqtt_broker_host: str = "broker.hivemq.com"
     mqtt_broker_port: int = 1883
     mqtt_username: str = ""
     mqtt_password: str = ""
-    mqtt_topic_pattern: str = "farm1/+/data"
+    mqtt_topic_pattern: str = "sensors/+"
     
     # FastAPI
     api_host: str = "0.0.0.0"

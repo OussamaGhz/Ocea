@@ -13,7 +13,7 @@ const char* ssid = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
 
 // MQTT Broker settings - CHANGE THE IP
-const char* mqtt_server = "192.168.1.100";  // Your OCEA server IP address
+const char* mqtt_server = "192.168.28.25";  // Your OCEA server IP address
 const int mqtt_port = 1883;
 
 // Device identification - CHANGE IF NEEDED

@@ -34,10 +34,17 @@ class MQTTHandler:
         if rc == 0:
             self.is_connected = True
             logger.info("Connected to MQTT broker")
-            # Subscribe to the topic pattern
-            topic = settings.mqtt_topic_pattern
-            client.subscribe(topic)
-            logger.info(f"Subscribed to topic: {topic}")
+            # Subscribe to multiple topic patterns
+            topics = [
+                ("sensors/+", 0),
+                ("status/+", 0),
+                ("commands/+", 0),
+                (settings.mqtt_topic_pattern, 0)  # Legacy pond data format
+            ]
+            
+            for topic, qos in topics:
+                client.subscribe(topic, qos)
+                logger.info(f"Subscribed to topic: {topic}")
         else:
             logger.error(f"Failed to connect to MQTT broker. Code: {rc}")
 
@@ -49,27 +56,96 @@ class MQTTHandler:
     def on_message(self, client, userdata, msg):
         """Callback for when a PUBLISH message is received from the server"""
         try:
-            # Parse the topic to extract pond_id
-            topic_parts = msg.topic.split('/')
-            if len(topic_parts) >= 2:
-                pond_id = topic_parts[1]  # farm1/pond_001/data -> pond_001
-            else:
-                logger.warning(f"Invalid topic format: {msg.topic}")
-                return
-
             # Parse the JSON payload
             payload_str = msg.payload.decode('utf-8')
             payload = json.loads(payload_str)
             
             logger.info(f"Received message from {msg.topic}: {payload}")
             
-            # Process the sensor data asynchronously
-            asyncio.create_task(self.process_sensor_data(pond_id, payload))
+            # Handle different topic types - use thread-safe approach
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                # No event loop in current thread, create one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            if msg.topic.startswith("sensors/temperature"):
+                # Handle temperature sensor data
+                if loop.is_running():
+                    asyncio.ensure_future(self.process_temperature_data(payload))
+                else:
+                    loop.run_until_complete(self.process_temperature_data(payload))
+            elif msg.topic.startswith("status/heartbeat"):
+                # Handle heartbeat messages
+                if loop.is_running():
+                    asyncio.ensure_future(self.process_heartbeat_data(payload))
+                else:
+                    loop.run_until_complete(self.process_heartbeat_data(payload))
+            elif msg.topic.startswith("status/device"):
+                # Handle device status
+                if loop.is_running():
+                    asyncio.ensure_future(self.process_device_status(payload))
+                else:
+                    loop.run_until_complete(self.process_device_status(payload))
+            else:
+                # Handle legacy pond sensor data format
+                topic_parts = msg.topic.split('/')
+                if len(topic_parts) >= 2:
+                    pond_id = topic_parts[1]  # farm1/pond_001/data -> pond_001
+                    if loop.is_running():
+                        asyncio.ensure_future(self.process_sensor_data(pond_id, payload))
+                    else:
+                        loop.run_until_complete(self.process_sensor_data(pond_id, payload))
+                else:
+                    logger.warning(f"Unknown topic format: {msg.topic}")
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON payload: {e}")
         except Exception as e:
             logger.error(f"Error processing MQTT message: {e}")
+
+    async def process_temperature_data(self, data: Dict[str, Any]):
+        """Process temperature sensor data from publisher"""
+        try:
+            device_id = data.get('device_id', 'unknown')
+            temperature = data.get('temperature')
+            humidity = data.get('humidity')
+            timestamp = data.get('timestamp')
+            
+            logger.info(f"🌡️ Temperature: {temperature}°C, Humidity: {humidity}% from {device_id}")
+            
+            # You can store this data or process it further
+            # For now, just log it
+            
+        except Exception as e:
+            logger.error(f"Error processing temperature data: {e}")
+
+    async def process_heartbeat_data(self, data: Dict[str, Any]):
+        """Process heartbeat data from devices"""
+        try:
+            device_id = data.get('device_id', 'unknown')
+            status = data.get('status', 'unknown')
+            timestamp = data.get('timestamp')
+            
+            logger.info(f"💓 Heartbeat from {device_id}: {status}")
+            
+            # You can track device health here
+            
+        except Exception as e:
+            logger.error(f"Error processing heartbeat data: {e}")
+
+    async def process_device_status(self, data: Dict[str, Any]):
+        """Process device status updates"""
+        try:
+            device_id = data.get('device_id', 'unknown')
+            status = data.get('status', 'unknown')
+            uptime = data.get('uptime')
+            
+            logger.info(f"📊 Device {device_id} status: {status}")
+            
+        except Exception as e:
+            logger.error(f"Error processing device status: {e}")
 
     async def process_sensor_data(self, pond_id: str, data: Dict[str, Any]):
         """Process incoming sensor data"""
@@ -163,7 +239,13 @@ class MQTTHandler:
 
     def setup_client(self):
         """Setup MQTT client"""
-        self.client = mqtt.Client()
+        # Fix for paho-mqtt 2.0+ compatibility
+        try:
+            # For paho-mqtt 2.0+
+            self.client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION1)
+        except (TypeError, AttributeError):
+            # For older versions of paho-mqtt
+            self.client = mqtt.Client()
         
         # Set callbacks
         self.client.on_connect = self.on_connect

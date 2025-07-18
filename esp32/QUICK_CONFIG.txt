@@ -1,0 +1,39 @@
+/*
+ * ESP32 Quick Configuration Reference
+ * Copy these values to your ESP32 code
+ */
+
+// ========== STEP 1: FIND YOUR SERVER IP ==========
+// Run this on your OCEA server to find the IP:
+// ip addr show | grep inet
+// or: hostname -I
+
+// ========== STEP 2: UPDATE THESE VALUES ==========
+
+// WiFi Configuration
+const char* ssid = "YOUR_WIFI_NAME";        // Replace with your WiFi name
+const char* password = "YOUR_WIFI_PASSWORD"; // Replace with your WiFi password
+
+// MQTT Broker Configuration  
+const char* mqtt_server = "192.168.1.100";   // Replace with your OCEA server IP
+const int mqtt_port = 1883;                  // Keep this as 1883
+
+// Device Configuration
+const char* device_id = "esp32_001";         // Unique name for this ESP32
+const char* farm_id = "farm1";               // Must match farm in OCEA
+const char* pond_id = "pond1";               // Must match pond in OCEA
+
+// ========== STEP 3: MQTT TOPICS (AUTO-GENERATED) ==========
+// Your ESP32 will publish to:
+// farm1/pond1/data     <- sensor readings go here
+// farm1/pond1/status   <- device status goes here
+
+// ========== STEP 4: TEST CONNECTION ==========
+// 1. Upload simple_test.ino to ESP32
+// 2. Open Serial Monitor (115200 baud)
+// 3. Look for "WiFi connected!" and "MQTT connected!"
+// 4. Check data in OCEA dashboard: http://YOUR_SERVER_IP:8000/docs
+
+// ========== STEP 5: MONITOR MQTT (OPTIONAL) ==========
+// On your OCEA server, run:
+// docker exec -it pond_mosquitto mosquitto_sub -h localhost -t "farm1/pond1/data"

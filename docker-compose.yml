@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: pond_mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - pond_network
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: pond_mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    networks:
+      - pond_network
+
+  api:
+    build: .
+    container_name: pond_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URL=mongodb://admin:password123@mongodb:27017/pond_monitoring?authSource=admin
+      - MQTT_BROKER_HOST=mosquitto
+      - MQTT_BROKER_PORT=1883
+    depends_on:
+      - mongodb
+      - mosquitto
+    volumes:
+      - ./models:/app/models
+    networks:
+      - pond_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  mqtt_subscriber:
+    build: .
+    container_name: pond_mqtt_subscriber
+    restart: unless-stopped
+    environment:
+      - MONGODB_URL=mongodb://admin:password123@mongodb:27017/pond_monitoring?authSource=admin
+      - MQTT_BROKER_HOST=mosquitto
+      - MQTT_BROKER_PORT=1883
+    depends_on:
+      - mongodb
+      - mosquitto
+    volumes:
+      - ./models:/app/models
+    networks:
+      - pond_network
+    command: python -m app.mqtt.subscriber
+
+volumes:
+  mongodb_data:
+  mosquitto_data:
+  mosquitto_log:
+
+networks:
+  pond_network:
+    driver: bridge

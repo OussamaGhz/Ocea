@@ -1,0 +1,33 @@
+{
+  "name": "pond-monitoring-backend",
+  "version": "1.0.0",
+  "description": "IoT Pond Monitoring Backend with MQTT and ML",
+  "main": "app/main.py",
+  "scripts": {
+    "start": "uvicorn app.main:app --host 0.0.0.0 --port 8000",
+    "dev": "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "mqtt": "python -m app.mqtt.subscriber",
+    "setup": "python scripts/setup.py",
+    "test": "python scripts/mqtt_test_publisher.py",
+    "migrate": "python scripts/migrate.py"
+  },
+  "keywords": [
+    "iot",
+    "mqtt",
+    "pond-monitoring",
+    "fastapi",
+    "mongodb",
+    "machine-learning",
+    "anomaly-detection"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/pond-monitoring-backend.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/pond-monitoring-backend/issues"
+  },
+  "homepage": "https://github.com/your-username/pond-monitoring-backend#readme"
+}

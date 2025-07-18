@@ -1,62 +1,62 @@
 #!/usr/bin/env python3
 """
-Backend Data Processing Monitor
+Backend MQTT Monitor with Real Database Integration
 
-This script shows how the backend processes incoming MQTT data:
-1. Receives MQTT messages
-2. Validates and stores sensor data
-3. Performs anomaly detection
-4. Creates alerts
-5. Logs all activities
-
-Usage:
-    python backend_monitor.py
+This script demonstrates the backend processing of MQTT data
+with real MongoDB database storage.
 """
 
 import asyncio
 import json
 import logging
-import sys
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 import paho.mqtt.client as mqtt
+from pymongo import MongoClient
+from bson import ObjectId
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('backend_monitor.log')
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-
 logger = logging.getLogger(__name__)
 
 class BackendMonitor:
-    """Simulates how the backend processes MQTT data"""
-    
     def __init__(self, broker_host="broker.hivemq.com", broker_port=1883):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.client = None
         self.is_connected = False
+        
+        # MongoDB connection
+        self.mongo_client = None
+        self.db = None
+        self.sensor_collection = None
+        
+        # In-memory storage for demonstration
         self.data_store = []  # Simulate database
         self.alerts = []      # Simulate alerts collection
-        self.device_status = {}  # Track device health
-        self.use_new_callbacks = False  # Initialize callback version flag
+        self.device_status = {}  # Track device status
         
-        # Water quality thresholds for alerts
-        self.thresholds = {
-            'temperature': {'min': 15.0, 'max': 30.0, 'critical_min': 10.0, 'critical_max': 35.0},
-            'ph': {'min': 6.5, 'max': 8.5, 'critical_min': 6.0, 'critical_max': 9.0},
-            'dissolved_oxygen': {'min': 5.0, 'max': 15.0, 'critical_min': 3.0, 'critical_max': 20.0},
-            'ammonia': {'max': 0.25, 'critical_max': 0.5},
-            'nitrite': {'max': 0.2, 'critical_max': 0.4},
-            'turbidity': {'max': 10.0, 'critical_max': 25.0}
-        }
-        
+        self.setup_database()
+        self.setup_mqtt()
+    
+    def setup_database(self):
+        """Setup MongoDB connection"""
+        try:
+            # Connect to MongoDB
+            self.mongo_client = MongoClient('mongodb://localhost:27017/')
+            self.db = self.mongo_client['ocea']
+            self.sensor_collection = self.db['sensor_readings']
+            logger.info("✅ Connected to MongoDB database")
+        except Exception as e:
+            logger.error(f"❌ Failed to connect to MongoDB: {e}")
+            self.mongo_client = None
+    
+    def setup_mqtt(self):
+        """Setup MQTT client"""
         self.setup_client()
     
     def setup_client(self):
@@ -208,6 +208,39 @@ class BackendMonitor:
             # Store in simulated database
             self.data_store.append(sensor_reading)
             logger.info(f"💾 Stored sensor reading #{sensor_reading['id']} for pond {pond_id}")
+            
+            # Store in real MongoDB database
+            if self.mongo_client is not None and self.sensor_collection is not None:
+                try:
+                    # Convert datetime objects to ISO strings for MongoDB
+                    mongo_record = {
+                        'pond_id': pond_id,
+                        'device_id': sensor_reading.get('device_id'),
+                        'timestamp': sensor_reading['timestamp'],
+                        'temperature': sensor_reading.get('temperature'),
+                        'ph': sensor_reading.get('ph'),
+                        'dissolved_oxygen': sensor_reading.get('dissolved_oxygen'),
+                        'turbidity': sensor_reading.get('turbidity'),
+                        'ammonia': sensor_reading.get('ammonia'),
+                        'nitrite': sensor_reading.get('nitrite'),
+                        'nitrate': sensor_reading.get('nitrate'),
+                        'salinity': sensor_reading.get('salinity'),
+                        'water_level': sensor_reading.get('water_level'),
+                        'data_quality': sensor_reading.get('data_quality'),
+                        'battery_level': sensor_reading.get('battery_level'),
+                        'signal_strength': sensor_reading.get('signal_strength'),
+                        'location': sensor_reading.get('location'),
+                        'fish_species': sensor_reading.get('fish_species'),
+                        'created_at': sensor_reading['created_at']
+                    }
+                    
+                    result = self.sensor_collection.insert_one(mongo_record)
+                    logger.info(f"🗄️ Stored in MongoDB with ID: {result.inserted_id}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to store in MongoDB: {e}")
+            else:
+                logger.warning("⚠️ MongoDB not available, storing only in memory")
             
             # Perform anomaly detection
             await self.perform_anomaly_detection(sensor_reading)
@@ -605,11 +638,17 @@ class BackendMonitor:
                 return False
     
     def disconnect(self):
-        """Disconnect from MQTT broker"""
+        """Disconnect from MQTT broker and close database connections"""
         if self.client:
             self.client.loop_stop()
             self.client.disconnect()
-            logger.info("👋 Disconnected from MQTT broker")
+            logger.info("� Disconnected from MQTT broker")
+        
+        if self.mongo_client:
+            self.mongo_client.close()
+            logger.info("🗄️ Closed MongoDB connection")
+        
+        logger.info("👋 Backend monitor stopped")
 
 async def main():
     """Main function"""

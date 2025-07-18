@@ -71,13 +71,8 @@ class MQTTHandler:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
             
-            if msg.topic.startswith("sensors/temperature"):
-                # Handle temperature sensor data
-                if loop.is_running():
-                    asyncio.ensure_future(self.process_temperature_data(payload))
-                else:
-                    loop.run_until_complete(self.process_temperature_data(payload))
-            elif msg.topic.startswith("sensors/water_quality"):
+            # Only process known valid topics to avoid storing null data
+            if msg.topic.startswith("sensors/water_quality"):
                 # Handle comprehensive water quality data
                 if loop.is_running():
                     asyncio.ensure_future(self.process_water_quality_data(payload))
@@ -95,17 +90,26 @@ class MQTTHandler:
                     asyncio.ensure_future(self.process_device_status(payload))
                 else:
                     loop.run_until_complete(self.process_device_status(payload))
-            else:
+            elif msg.topic.startswith("farm1/") and msg.topic.endswith("/data"):
                 # Handle legacy pond sensor data format
                 topic_parts = msg.topic.split('/')
-                if len(topic_parts) >= 2:
-                    pond_id = topic_parts[1]  # farm1/pond_001/data -> pond_001
+                if len(topic_parts) >= 3:  # farm1/pond_001/data
+                    pond_id = topic_parts[1]  # Extract pond_001
                     if loop.is_running():
                         asyncio.ensure_future(self.process_sensor_data(pond_id, payload))
                     else:
                         loop.run_until_complete(self.process_sensor_data(pond_id, payload))
                 else:
-                    logger.warning(f"Unknown topic format: {msg.topic}")
+                    logger.warning(f"Invalid pond topic format: {msg.topic}")
+            elif msg.topic.startswith("sensors/temperature"):
+                # Handle temperature sensor data (but don't store incomplete records)
+                if loop.is_running():
+                    asyncio.ensure_future(self.process_temperature_data(payload))
+                else:
+                    loop.run_until_complete(self.process_temperature_data(payload))
+            else:
+                # Skip unknown topics to avoid creating null records
+                logger.info(f"Skipping unknown topic: {msg.topic}")
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON payload: {e}")
@@ -122,8 +126,9 @@ class MQTTHandler:
             
             logger.info(f"🌡️ Temperature: {temperature}°C, Humidity: {humidity}% from {device_id}")
             
-            # You can store this data or process it further
-            # For now, just log it
+            # Skip storing incomplete data from random sensors
+            # Only log for debugging purposes
+            logger.debug(f"Skipping incomplete temperature data from {device_id}")
             
         except Exception as e:
             logger.error(f"Error processing temperature data: {e}")

@@ -1,6 +1,22 @@
-# 🌊 Pond Monitoring System
+<div align="center">
+  <img src="./assets/ocea-logo.png" alt="Ocea Logo" width="300"/>
+</div>
+
+# 🌊 Ocea - Pond Monitoring System
+
 
 A comprehensive FastAPI-based IoT aquaculture monitoring system with real-time data collection, intelligent alert management, and advanced analytics for pond farming operations.
+
+---
+
+## 🏆 About This Project
+
+**Ocea** is an innovative aquaculture monitoring solution developed by **Team Amadeus** during the **Junction Hackathon**. Our mission is to revolutionize sustainable fish farming through intelligent IoT monitoring and real-time analytics.
+
+
+### 👥 Team Amadeus
+
+We are passionate developers committed to using technology for environmental sustainability and food security through smart aquaculture solutions.
 
 ## 🚀 Key Features
 
@@ -323,11 +339,22 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
+### 🏆 Junction Hackathon
+- **Event**: [Junction Hackathon](https://www.junction.fi/) - Europe's leading hackathon
+- **Team**: Amadeus - Passionate developers focused on sustainable technology
+- **Achievement**: Developed comprehensive aquaculture monitoring solution
+- **Impact**: Contributing to sustainable food production and environmental monitoring
+
+### 🛠 Technologies
 - **FastAPI** - Modern web framework for Python APIs
 - **MongoDB** - Document-based database for sensor data
 - **MQTT** - Lightweight messaging protocol for IoT
 - **Twilio** - SMS notification service
 - **Scikit-learn** - Machine learning capabilities
+- **React** - Frontend framework for dashboard applications
+
+### 🌊 Mission
+Our goal is to leverage cutting-edge technology to support sustainable aquaculture practices, helping fish farmers optimize their operations while protecting aquatic ecosystems.
 
 ## 📞 Support
 
@@ -338,4 +365,7 @@ For support, feature requests, or bug reports:
 
 ---
 
-**Made with ❤️ by Amadeus**
+<div align="center">
+  <p><strong>🌊 Made with ❤️ for sustainable aquaculture by Team Amadeus</strong></p>
+  <p><em>Junction Hackathon Project - Revolutionizing Pond Monitoring</em></p>
+</div>

@@ -1,8 +1,12 @@
-# 🌊 Pond Monitoring MVP API Documentation
+# 🌊 Ocea - Pond Monitoring MVP API Documentation
+
+> **🏆 Team Amadeus - Junction Hackathon Project**
 
 ## Overview
 
-This document provides complete API documentation for the Pond Monitoring System MVP. The API provides real-time sensor data, alert management, and dashboard functionality for aquaculture monitoring.
+This document provides complete API documentation for the **Ocea** Pond Monitoring System MVP. The API provides real-time sensor data, alert management, and dashboard functionality for aquaculture monitoring.
+
+**Ocea** is developed by **Team Amadeus** during the **Junction Hackathon** to revolutionize sustainable aquaculture through intelligent IoT monitoring.
 
 **Base URL**: `http://localhost:8000`  
 **WebSocket URL**: `ws://localhost:8000/mvp/ws`

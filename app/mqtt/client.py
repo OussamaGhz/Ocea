@@ -4,11 +4,13 @@ import logging
 from datetime import datetime
 from typing import Dict, Any
 import paho.mqtt.client as mqtt
+import pymongo
+from bson import ObjectId
 from app.config import get_settings
 from app.database.connection import get_database
-from app.services.database_service import SensorReadingService, AlertService
-from app.schemas.schemas import SensorReadingCreate, AlertCreate
-from app.ml.anomaly_detection import anomaly_detector
+from app.services.alert_service import AlertService
+from app.schemas.schemas import SensorReadingCreate
+from app.websocket.manager import websocket_manager
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -18,29 +20,47 @@ class MQTTHandler:
     def __init__(self):
         self.client = None
         self.db = None
-        self.sensor_service = None
         self.alert_service = None
         self.is_connected = False
+        # Add synchronous MongoDB connection for MQTT processing
+        self.sync_mongo_client = None
+        self.sync_db = None
+        self._message_queue = []
+
+    async def initialize(self):
+        """Initialize database services"""
+        self.db = get_database()
+        self.alert_service = AlertService(self.db)
+        
+        # Initialize synchronous MongoDB connection for MQTT processing
+        self.sync_mongo_client = pymongo.MongoClient(settings.mongodb_url)
+        self.sync_db = self.sync_mongo_client[settings.database_name]
+        
+        logger.info("MQTT Handler initialized with alert service and WebSocket integration")
 
     async def initialize(self):
         """Initialize database services"""
         self.db = get_database()
         self.sensor_service = SensorReadingService(self.db)
         self.alert_service = AlertService(self.db)
-        logger.info("MQTT Handler initialized")
+        
+        # Initialize synchronous MongoDB connection for MQTT processing
+        self.sync_mongo_client = pymongo.MongoClient(settings.mongodb_url)
+        self.sync_db = self.sync_mongo_client[settings.database_name]
+        
+        logger.info("MQTT Handler initialized with both async and sync database connections")
 
     def on_connect(self, client, userdata, flags, rc):
         """Callback for when the client receives a CONNACK response from the server"""
         if rc == 0:
             self.is_connected = True
             logger.info("Connected to MQTT broker")
-            # Subscribe to multiple topic patterns
+            # Subscribe to the new pond data topic
             topics = [
-                ("sensors/+", 0),
-                ("sensors/water_quality", 0),
-                ("status/+", 0),
-                ("commands/+", 0),
-                (settings.mqtt_topic_pattern, 0)  # Legacy pond data format
+                ("sensors/pond_data", 0),  # Main topic for pond sensor data
+                ("sensors/+", 0),          # Wildcard for other sensor topics
+                ("status/+", 0),           # Status updates
+                ("commands/+", 0)          # Commands
             ]
             
             for topic, qos in topics:
@@ -65,58 +85,229 @@ class MQTTHandler:
             
             logger.info(f"Received message from {msg.topic}: {payload}")
             
-            # Handle different topic types - use thread-safe approach
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                # No event loop in current thread, create one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            # Store the message for processing in the main event loop
+            if not hasattr(self, '_message_queue'):
+                self._message_queue = []
             
-            # Only process known valid topics to avoid storing null data
-            if msg.topic.startswith("sensors/water_quality"):
-                # Handle comprehensive water quality data
-                if loop.is_running():
-                    asyncio.ensure_future(self.process_water_quality_data(payload))
-                else:
-                    loop.run_until_complete(self.process_water_quality_data(payload))
-            elif msg.topic.startswith("status/heartbeat"):
-                # Handle heartbeat messages
-                if loop.is_running():
-                    asyncio.ensure_future(self.process_heartbeat_data(payload))
-                else:
-                    loop.run_until_complete(self.process_heartbeat_data(payload))
-            elif msg.topic.startswith("status/device"):
-                # Handle device status
-                if loop.is_running():
-                    asyncio.ensure_future(self.process_device_status(payload))
-                else:
-                    loop.run_until_complete(self.process_device_status(payload))
-            elif msg.topic.startswith("farm1/") and msg.topic.endswith("/data"):
-                # Handle legacy pond sensor data format
-                topic_parts = msg.topic.split('/')
-                if len(topic_parts) >= 3:  # farm1/pond_001/data
-                    pond_id = topic_parts[1]  # Extract pond_001
-                    if loop.is_running():
-                        asyncio.ensure_future(self.process_sensor_data(pond_id, payload))
-                    else:
-                        loop.run_until_complete(self.process_sensor_data(pond_id, payload))
-                else:
-                    logger.warning(f"Invalid pond topic format: {msg.topic}")
-            elif msg.topic.startswith("sensors/temperature"):
-                # Handle temperature sensor data (but don't store incomplete records)
-                if loop.is_running():
-                    asyncio.ensure_future(self.process_temperature_data(payload))
-                else:
-                    loop.run_until_complete(self.process_temperature_data(payload))
-            else:
-                # Skip unknown topics to avoid creating null records
-                logger.info(f"Skipping unknown topic: {msg.topic}")
+            self._message_queue.append((msg.topic, payload))
+            
+            # Process the message immediately in a new thread if possible
+            # This ensures the database operations run properly
+            import threading
+            thread = threading.Thread(target=self._process_message_sync, args=(msg.topic, payload))
+            thread.daemon = True
+            thread.start()
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON payload: {e}")
         except Exception as e:
             logger.error(f"Error processing MQTT message: {e}")
+    
+    def _process_message_sync(self, topic: str, payload: dict):
+        """Process message in a synchronous context with direct database operations"""
+        try:
+            # Process the message based on topic using synchronous database operations
+            if topic == "sensors/pond_data":
+                # Main pond sensor data
+                self._process_pond_sensor_data_sync(payload)
+            elif topic.startswith("sensors/water_quality"):
+                # Legacy water quality data
+                self._process_water_quality_sync(payload)
+            elif topic.startswith("status/heartbeat"):
+                self._process_heartbeat_sync(payload)
+            elif topic.startswith("status/device"):
+                self._process_device_status_sync(payload)
+            elif topic.startswith("farm1/") and topic.endswith("/data"):
+                # Legacy farm data format
+                topic_parts = topic.split('/')
+                if len(topic_parts) >= 3:  # farm1/pond_001/data
+                    pond_id = topic_parts[1]  # Extract pond_001
+                    self._process_sensor_data_sync(pond_id, payload)
+                else:
+                    logger.warning(f"Invalid pond topic format: {topic}")
+            elif topic.startswith("sensors/temperature"):
+                self._process_temperature_sync(payload)
+            else:
+                logger.info(f"Skipping unknown topic: {topic}")
+            
+        except Exception as e:
+            logger.error(f"Error processing message in sync context: {e}")
+
+    def _process_pond_sensor_data_sync(self, data: Dict[str, Any]):
+        """Process pond sensor data from simulators"""
+        try:
+            pond_id = data.get('pond_id', 'unknown')
+            device_id = data.get('device_id', 'unknown')
+            
+            logger.info(f"🏊 Pond sensor data from {device_id} for {pond_id}")
+            
+            # Extract and validate timestamp
+            timestamp_str = data.get('timestamp')
+            if timestamp_str:
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    timestamp = datetime.utcnow()
+                    logger.warning(f"Invalid timestamp format for {pond_id}, using current time")
+            else:
+                timestamp = datetime.utcnow()
+
+            # Create sensor reading document with the 8 core sensor parameters
+            reading_doc = {
+                'pond_id': pond_id,
+                'device_id': device_id,
+                'timestamp': timestamp,
+                'ph': data.get('ph'),
+                'temperature': data.get('temperature'),
+                'dissolved_oxygen': data.get('dissolved_oxygen'),
+                'turbidity': data.get('turbidity'),
+                'nitrate': data.get('nitrate'),
+                'nitrite': data.get('nitrite'),
+                'ammonia': data.get('ammonia'),
+                'water_level': data.get('water_level'),
+                'created_at': datetime.utcnow()
+            }
+
+            # Store the reading using synchronous MongoDB
+            result = self.sync_db.sensor_readings.insert_one(reading_doc)
+            
+            # Log the stored data
+            logger.info(f"✅ Stored sensor reading for {pond_id}: pH={data.get('ph')}, Temp={data.get('temperature')}°C, DO={data.get('dissolved_oxygen')}mg/L, ID={result.inserted_id}")
+            
+            # Check for critical alerts
+            self._check_critical_conditions_sync(pond_id, data)
+
+        except Exception as e:
+            logger.error(f"❌ Error processing pond sensor data: {e}")
+            
+    def _process_water_quality_sync(self, data: Dict[str, Any]):
+        """Process water quality data synchronously"""
+        try:
+            pond_id = data.get('pond_id', 'unknown')
+            device_id = data.get('device_id', 'unknown')
+            
+            logger.info(f"💧 Water quality data from {device_id} for pond {pond_id}")
+            
+            # Process as sensor data
+            self._process_sensor_data_sync(pond_id, data)
+            
+        except Exception as e:
+            logger.error(f"Error processing water quality data: {e}")
+            
+    def _process_heartbeat_sync(self, data: Dict[str, Any]):
+        """Process heartbeat data synchronously"""
+        try:
+            device_id = data.get('device_id', 'unknown')
+            status = data.get('status', 'unknown')
+            
+            logger.info(f"💓 Heartbeat from {device_id}: {status}")
+            
+        except Exception as e:
+            logger.error(f"Error processing heartbeat: {e}")
+            
+    def _process_device_status_sync(self, data: Dict[str, Any]):
+        """Process device status synchronously"""
+        try:
+            device_id = data.get('device_id', 'unknown')
+            status = data.get('status', 'unknown')
+            
+            logger.info(f"📊 Device {device_id} status: {status}")
+            
+        except Exception as e:
+            logger.error(f"Error processing device status: {e}")
+            
+    def _process_temperature_sync(self, data: Dict[str, Any]):
+        """Process temperature data synchronously"""
+        try:
+            device_id = data.get('device_id', 'unknown')
+            temperature = data.get('temperature')
+            humidity = data.get('humidity')
+            
+            logger.info(f"🌡️ Temperature: {temperature}°C, Humidity: {humidity}% from {device_id}")
+            
+        except Exception as e:
+            logger.error(f"Error processing temperature data: {e}")
+            
+    def _check_critical_conditions_sync(self, pond_id: str, sensor_data: Dict[str, Any]):
+        """Check for critical conditions synchronously"""
+        try:
+            critical_alerts = []
+            
+            # Critical dissolved oxygen levels
+            if sensor_data.get('dissolved_oxygen') is not None:
+                do_level = sensor_data['dissolved_oxygen']
+                if do_level < 3.0:  # Critical for fish survival
+                    critical_alerts.append({
+                        'pond_id': pond_id,
+                        'alert_type': 'critical_oxygen',
+                        'message': f'Dangerously low dissolved oxygen: {do_level} mg/L',
+                        'severity': 'critical',
+                        'timestamp': datetime.utcnow()
+                    })
+                elif do_level < 5.0:  # Warning level
+                    critical_alerts.append({
+                        'pond_id': pond_id,
+                        'alert_type': 'low_oxygen',
+                        'message': f'Low dissolved oxygen: {do_level} mg/L',
+                        'severity': 'high',
+                        'timestamp': datetime.utcnow()
+                    })
+            
+            # Critical temperature
+            if sensor_data.get('temperature') is not None:
+                temp = sensor_data['temperature']
+                if temp < 15.0 or temp > 32.0:  # Critical temperature range
+                    critical_alerts.append({
+                        'pond_id': pond_id,
+                        'alert_type': 'temperature_extreme',
+                        'message': f'Extreme temperature: {temp}°C',
+                        'severity': 'critical',
+                        'timestamp': datetime.utcnow()
+                    })
+            
+            # Critical pH levels
+            if sensor_data.get('ph') is not None:
+                ph = sensor_data['ph']
+                if ph < 6.0 or ph > 9.0:  # Critical pH range
+                    critical_alerts.append({
+                        'pond_id': pond_id,
+                        'alert_type': 'ph_extreme',
+                        'message': f'Extreme pH level: {ph}',
+                        'severity': 'critical',
+                        'timestamp': datetime.utcnow()
+                    })
+            
+            # High ammonia levels
+            if sensor_data.get('ammonia') is not None:
+                ammonia = sensor_data['ammonia']
+                if ammonia > 0.5:  # Critical ammonia level
+                    critical_alerts.append({
+                        'pond_id': pond_id,
+                        'alert_type': 'high_ammonia',
+                        'message': f'High ammonia level: {ammonia} mg/L',
+                        'severity': 'critical',
+                        'timestamp': datetime.utcnow()
+                    })
+            
+            # High nitrite levels
+            if sensor_data.get('nitrite') is not None:
+                nitrite = sensor_data['nitrite']
+                if nitrite > 0.5:  # Critical nitrite level
+                    critical_alerts.append({
+                        'pond_id': pond_id,
+                        'alert_type': 'high_nitrite',
+                        'message': f'High nitrite level: {nitrite} mg/L',
+                        'severity': 'high',
+                        'timestamp': datetime.utcnow()
+                    })
+            
+            # Store alerts if any
+            if critical_alerts:
+                self.sync_db.alerts.insert_many(critical_alerts)
+                logger.warning(f"⚠️ Created {len(critical_alerts)} critical alerts for pond {pond_id}")
+            
+        except Exception as e:
+            logger.error(f"Error checking critical conditions: {e}")
 
     async def process_temperature_data(self, data: Dict[str, Any]):
         """Process temperature sensor data from publisher"""

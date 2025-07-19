@@ -31,6 +31,26 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     
+    # Twilio SMS
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""
+    alert_phone_number: str = ""
+    
+    # Sensor Thresholds
+    ph_min: float = 6.5
+    ph_max: float = 8.5
+    temperature_min: float = 20.0
+    temperature_max: float = 30.0
+    dissolved_oxygen_min: float = 5.0
+    dissolved_oxygen_max: float = 15.0
+    turbidity_max: float = 10.0
+    nitrate_max: float = 40.0
+    nitrite_max: float = 0.5
+    ammonia_max: float = 0.5
+    water_level_min: float = 0.5
+    water_level_max: float = 3.0
+    
     class Config:
         env_file = ".env"
 

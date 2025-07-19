@@ -1,14 +1,14 @@
 import logging
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.database.connection import connect_to_mongo, close_mongo_connection
-from app.api import auth, users, farms, ponds, sensor_readings, alerts, ml
-from app.ml.anomaly_detection import anomaly_detector
-from app.mqtt.subscriber import MQTTSubscriber
+from app.api import auth, users, farms, ponds, sensor_readings, alerts, ml, dashboard, mvp_dashboard
+from app.mqtt.simple_client import simple_mqtt_handler
 
 # Configure logging
 logging.basicConfig(
@@ -19,76 +19,96 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-# Global MQTT subscriber instance
-mqtt_subscriber = None
-mqtt_task = None
+# Background task for MQTT
+def start_mqtt_background():
+    """Start MQTT client in background thread"""
+    try:
+        logger.info("🚀 Starting MQTT client in background...")
+        simple_mqtt_handler.initialize()
+        simple_mqtt_handler.setup_client()
+        simple_mqtt_handler.connect()
+        simple_mqtt_handler.start_loop()  # This blocks
+    except Exception as e:
+        logger.error(f"❌ Error starting MQTT client: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown"""
-    global mqtt_subscriber, mqtt_task
-    
     # Startup
-    logger.info("Starting up...")
+    logger.info("🌊 Starting Pond Monitoring System MVP...")
     await connect_to_mongo()
+    logger.info("✅ Database connected")
     
-    # Try to load existing ML model
-    try:
-        anomaly_detector.load_model("models/anomaly_detector.pkl")
-        logger.info("Loaded existing ML model")
-    except Exception as e:
-        logger.info("No existing ML model found, will use rule-based detection")
-    
-    # Start MQTT subscriber as a background task
-    try:
-        logger.info("Starting MQTT subscriber...")
-        mqtt_subscriber = MQTTSubscriber()
-        mqtt_task = asyncio.create_task(mqtt_subscriber.start())
-        logger.info("MQTT subscriber started as background task")
-    except Exception as e:
-        logger.error(f"Failed to start MQTT subscriber: {e}")
+    # Start MQTT client in background thread
+    mqtt_thread = threading.Thread(target=start_mqtt_background, daemon=True)
+    mqtt_thread.start()
+    logger.info("✅ MQTT client started in background")
     
     yield
     
     # Shutdown
-    logger.info("Shutting down...")
-    
-    # Stop MQTT subscriber
-    if mqtt_subscriber:
-        try:
-            await mqtt_subscriber.stop()
-            logger.info("MQTT subscriber stopped")
-        except Exception as e:
-            logger.error(f"Error stopping MQTT subscriber: {e}")
-    
-    # Cancel the task if it's still running
-    if mqtt_task and not mqtt_task.done():
-        mqtt_task.cancel()
-        try:
-            await mqtt_task
-        except asyncio.CancelledError:
-            logger.info("MQTT task cancelled")
-    
+    logger.info("🛑 Shutting down Pond Monitoring System...")
+    simple_mqtt_handler.stop()
     await close_mongo_connection()
+    logger.info("✅ Shutdown complete")
 
 
 # Create FastAPI application
 app = FastAPI(
-    title="Pond Monitoring API",
-    description="IoT Pond Monitoring System with MQTT data ingestion and ML-based anomaly detection",
+    title="Pond Monitoring System MVP",
+    description="Real-time pond monitoring with WebSocket, alerts, and SMS notifications",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# Add CORS middleware
+# Add CORS middleware - Explicit configuration for better browser compatibility
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=[
+        "http://localhost:3000",  # React dev server
+        "http://localhost:3001",  # Alternative React port
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:8080",  # Vue dev server
+        "http://127.0.0.1:3000",  # Alternative localhost
+        "http://127.0.0.1:5173",  # Alternative Vite
+        "*"  # Allow all for development
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type", 
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "Access-Control-Request-Method",
+        "Access-Control-Request-Headers"
+    ],
+    expose_headers=["*"]
 )
+
+# Debug middleware to log CORS requests
+@app.middleware("http")
+async def cors_debug_middleware(request: Request, call_next):
+    """Debug middleware to log CORS-related headers"""
+    origin = request.headers.get("origin")
+    method = request.method
+    
+    if origin or method == "OPTIONS":
+        logger.info(f"CORS Request: {method} {request.url} from Origin: {origin}")
+        
+    response = await call_next(request)
+    
+    # Log response CORS headers for debugging
+    if origin or method == "OPTIONS":
+        cors_headers = {
+            k: v for k, v in response.headers.items() 
+            if k.lower().startswith('access-control-')
+        }
+        logger.info(f"CORS Response headers: {cors_headers}")
+    
+    return response
 
 
 @app.exception_handler(HTTPException)
@@ -118,6 +138,8 @@ app.include_router(ponds.router)
 app.include_router(sensor_readings.router)
 app.include_router(alerts.router)
 app.include_router(ml.router)
+app.include_router(dashboard.router)
+app.include_router(mvp_dashboard.router)  # MVP Dashboard with WebSocket
 
 
 @app.get("/")
@@ -136,7 +158,8 @@ async def root():
         },
         "endpoints": {
             "health": "/health",
-            "services_status": "/services/status",
+            "mvp_dashboard": "/mvp",
+            "websocket": "/mvp/ws",
             "documentation": "/docs"
         }
     }
@@ -145,11 +168,9 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    mqtt_status = "unknown"
-    if mqtt_subscriber:
-        mqtt_status = "running" if mqtt_subscriber.running else "stopped"
-    elif mqtt_task:
-        mqtt_status = "task_running" if not mqtt_task.done() else "task_done"
+    from app.websocket.manager import websocket_manager
+    
+    mqtt_status = "connected" if simple_mqtt_handler.is_connected else "disconnected"
     
     return {
         "status": "healthy",
@@ -157,7 +178,8 @@ async def health_check():
         "services": {
             "api": "running",
             "database": "connected",
-            "mqtt_subscriber": mqtt_status
+            "mqtt_client": mqtt_status,
+            "websocket_connections": websocket_manager.get_connection_count()
         }
     }
 
@@ -165,24 +187,8 @@ async def health_check():
 @app.get("/services/status")
 async def services_status():
     """Get detailed status of all services"""
-    mqtt_status = {
-        "status": "unknown",
-        "running": False,
-        "task_done": None
-    }
-    
-    if mqtt_subscriber:
-        mqtt_status["status"] = "running" if mqtt_subscriber.running else "stopped"
-        mqtt_status["running"] = mqtt_subscriber.running
-    
-    if mqtt_task:
-        mqtt_status["task_done"] = mqtt_task.done()
-        if mqtt_task.done():
-            try:
-                mqtt_task.result()
-                mqtt_status["status"] = "completed"
-            except Exception as e:
-                mqtt_status["status"] = f"failed: {str(e)}"
+    from app.websocket.manager import websocket_manager
+    from app.services.sms_service import sms_service
     
     return {
         "api": {
@@ -192,7 +198,16 @@ async def services_status():
         "database": {
             "status": "connected"
         },
-        "mqtt_subscriber": mqtt_status
+        "mqtt_client": {
+            "status": "connected" if simple_mqtt_handler.is_connected else "disconnected",
+            "broker": f"{settings.mqtt_broker_host}:{settings.mqtt_broker_port}"
+        },
+        "websocket": {
+            "active_connections": websocket_manager.get_connection_count()
+        },
+        "sms_service": {
+            "status": "enabled" if sms_service.is_enabled() else "disabled"
+        }
     }
 
 

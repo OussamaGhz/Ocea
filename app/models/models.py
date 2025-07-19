@@ -82,17 +82,20 @@ class SensorReading(BaseModel):
     )
     
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
-    pond_id: PyObjectId
+    pond_id: str  # Simple string identifier like "pond_001", "pond_002"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    temperature: Optional[float] = None
-    ph: Optional[float] = None
-    dissolved_oxygen: Optional[float] = None
-    turbidity: Optional[float] = None
-    ammonia: Optional[float] = None
-    nitrite: Optional[float] = None
-    nitrate: Optional[float] = None
-    salinity: Optional[float] = None
-    water_level: Optional[float] = None
+    
+    # Core sensor data as required
+    ph: Optional[float] = None                    # pH level
+    temperature: Optional[float] = None           # Temperature in Celsius
+    dissolved_oxygen: Optional[float] = None      # Dissolved Oxygen in mg/L
+    turbidity: Optional[float] = None             # Turbidity in NTU
+    nitrate: Optional[float] = None               # Nitrate in mg/L
+    nitrite: Optional[float] = None               # Nitrite in mg/L
+    ammonia: Optional[float] = None               # Ammonia in mg/L
+    water_level: Optional[float] = None           # Water level in meters
+    
+    # Metadata
     device_id: Optional[str] = None
     is_anomaly: bool = False
     anomaly_score: Optional[float] = None
@@ -115,12 +118,16 @@ class Alert(BaseModel):
     )
     
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
-    pond_id: PyObjectId
+    pond_id: str  # Simple string like "pond_001"
     sensor_reading_id: Optional[PyObjectId] = None
     alert_type: str  # e.g., "temperature_high", "ph_low", "oxygen_critical"
+    parameter: str  # sensor parameter name
+    current_value: float  # actual sensor value
+    threshold_value: float  # threshold that was exceeded
     severity: AlertSeverity
     message: str
     is_resolved: bool = False
+    sms_sent: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     resolved_at: Optional[datetime] = None
 

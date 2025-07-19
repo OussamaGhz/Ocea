@@ -91,15 +91,17 @@ class PondResponse(BaseModel):
 class SensorReadingCreate(BaseModel):
     pond_id: str
     timestamp: Optional[datetime] = None
-    temperature: Optional[float] = None
-    ph: Optional[float] = None
-    dissolved_oxygen: Optional[float] = None
-    turbidity: Optional[float] = None
-    ammonia: Optional[float] = None
-    nitrite: Optional[float] = None
-    nitrate: Optional[float] = None
-    salinity: Optional[float] = None
-    water_level: Optional[float] = None
+    
+    # Core sensor data as required
+    ph: Optional[float] = None                    # pH level
+    temperature: Optional[float] = None           # Temperature in Celsius
+    dissolved_oxygen: Optional[float] = None      # Dissolved Oxygen in mg/L
+    turbidity: Optional[float] = None             # Turbidity in NTU
+    nitrate: Optional[float] = None               # Nitrate in mg/L
+    nitrite: Optional[float] = None               # Nitrite in mg/L
+    ammonia: Optional[float] = None               # Ammonia in mg/L
+    water_level: Optional[float] = None           # Water level in meters
+    
     device_id: Optional[str] = None
 
 
@@ -107,14 +109,13 @@ class SensorReadingResponse(BaseModel):
     id: str
     pond_id: str
     timestamp: datetime
-    temperature: Optional[float]
     ph: Optional[float]
+    temperature: Optional[float]
     dissolved_oxygen: Optional[float]
     turbidity: Optional[float]
-    ammonia: Optional[float]
-    nitrite: Optional[float]
     nitrate: Optional[float]
-    salinity: Optional[float]
+    nitrite: Optional[float]
+    ammonia: Optional[float]
     water_level: Optional[float]
     device_id: Optional[str]
     is_anomaly: bool

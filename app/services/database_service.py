@@ -173,19 +173,14 @@ class SensorReadingService:
         # Add created_at field
         reading_dict["created_at"] = datetime.utcnow()
         
-        # Convert pond_id string to ObjectId if it's a valid ObjectId string
+        # Handle pond_id - store as string if it's not a valid ObjectId
         pond_id = reading_dict.get("pond_id")
         if isinstance(pond_id, str):
             if ObjectId.is_valid(pond_id):
                 reading_dict["pond_id"] = ObjectId(pond_id)
             else:
-                # If it's not a valid ObjectId, we'll create a dummy ObjectId or handle it differently
-                # For now, let's create a new ObjectId from the string hash
-                import hashlib
-                hash_object = hashlib.md5(pond_id.encode())
-                hex_dig = hash_object.hexdigest()
-                # Create a valid ObjectId from the hash (take first 24 characters)
-                reading_dict["pond_id"] = ObjectId(hex_dig[:24])
+                # Keep as string for pond names like "pond_001", "pond1", etc.
+                reading_dict["pond_id"] = pond_id
         
         result = await self.collection.insert_one(reading_dict)
         reading_dict["_id"] = result.inserted_id
@@ -205,7 +200,11 @@ class SensorReadingService:
         limit: int = 100
     ) -> List[SensorReading]:
         """Get readings by pond with optional date filtering"""
-        query = {"pond_id": ObjectId(pond_id)}
+        # Handle both ObjectId and string pond_id formats
+        if ObjectId.is_valid(pond_id):
+            query = {"pond_id": ObjectId(pond_id)}
+        else:
+            query = {"pond_id": pond_id}
         
         if start_date or end_date:
             date_filter = {}
